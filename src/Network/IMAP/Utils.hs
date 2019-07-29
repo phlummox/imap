@@ -14,6 +14,8 @@ import Control.Monad (MonadPlus(..))
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Concurrent.STM.Delay
 
+import Debug.Trace
+
 genRequestId :: IO BSC.ByteString
 genRequestId = do
   randomGen <- newStdGen
@@ -22,6 +24,7 @@ genRequestId = do
 readResults :: (MonadPlus m, MonadIO m, Universe m) =>
   IMAPState -> ResponseRequest -> m CommandResult
 readResults state req@(ResponseRequest resultsQueue requestId) = do
+  liftIO $ traceIO "[-] in Utils.readResults"
   let timeout = imapTimeout . imapSettings $ state
   let reqs = outstandingReqs state
 
@@ -58,6 +61,9 @@ ifNotDisconnected :: (MonadPlus m, MonadIO m) =>
                      IMAPConnection -> m CommandResult -> m CommandResult
 ifNotDisconnected conn action = do
   connState <- liftIO . atomically . readTVar $ connectionState conn
+  liftIO $ do 
+    traceIO   "[-] in Utils.ifNotDisconnected"
+    traceIO $ "    connection state: " ++ show connState
   if isDisconnected connState
     then return . Tagged $ TaggedResult {
         commandId = "noid",

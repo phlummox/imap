@@ -100,8 +100,11 @@ toInt :: BSC.ByteString -> Either ErrorMessage Integer
 toInt bs = if null parsed
     then Left errorMsg
     else Right . fst . head $ parsed
-  where parsed = reads $ BSC.unpack bs
+  where parsed = reads' $ BSC.unpack bs
         errorMsg = T.concat ["Count not parse '", decodeUtf8 bs, "' as an integer"]
+
+        reads' :: String -> [(Integer,String)]
+        reads' = reads
 
 parseNumber :: (Integer -> a) -> BSC.ByteString ->
   BSC.ByteString -> Parser (Either ErrorMessage a)

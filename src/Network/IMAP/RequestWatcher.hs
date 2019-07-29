@@ -27,7 +27,7 @@ import Control.Monad (when)
 import Data.Foldable (forM_)
 
 import System.Log.Logger (errorM)
-
+import Debug.Trace
 
 requestWatcher :: (MonadIO m, Universe m, MonadCatch m) => IMAPConnection -> m ()
 requestWatcher conn = flip C.catch (handleExceptions conn) $ do
@@ -71,15 +71,17 @@ updateConnState conn command = do
 
 shouldIDie :: (MonadIO m) => IMAPConnection -> m ()
 shouldIDie conn = liftIO $ do
+  traceIO $ "[-] in shouldIDie"
   threadId <- atomically . readTVar . serverWatcherThread . imapState $ conn
   connState <- atomically . readTVar $ connectionState conn
 
-  when (isDisconnected connState && isJust threadId) $
+  when (isDisconnected connState && isJust threadId) $ do
+    traceIO $ "[-] in shouldIDie - killing thread"
     killThread $ fromJust threadId
 
 dispatchError :: (MonadIO m) => [ResponseRequest] ->
   ErrorMessage -> m [ResponseRequest]
-dispatchError requests errorMessage = do
+dispatchError requests errorMessage =
   case requests of
     req:reqs -> do
       let errorResponse = TaggedResult {
@@ -114,7 +116,8 @@ dispatchUntagged :: (MonadIO m) => IMAPConnection ->
                     m [ResponseRequest]
 dispatchUntagged conn requests response = do
   if null requests
-    then liftIO . atomically $ RQ.write (untaggedQueue conn) response
+    then liftIO $
+            atomically $ RQ.write (untaggedQueue conn) response
     else liftIO . atomically $ do
       let responseQ = responseQueue . head $ requests
       writeTQueue responseQ $ Untagged response
@@ -139,10 +142,14 @@ parseChunk :: (BSC.ByteString -> Result ParseResult) ->
               BSC.ByteString ->
               ((Maybe ParseResult, Maybe (BSC.ByteString -> Result ParseResult)), BSC.ByteString)
 parseChunk parser chunk =
-    case parser chunk of
+    traceChunk $ case parser chunk of
       Fail left _ msg -> ((Just $ assembleParseError msg chunk, Nothing), omitOneLine left)
       Partial continuation -> ((Nothing, Just continuation), BS.empty)
       Done left result -> ((Just result, Nothing), left)
+  where
+    traceChunk :: a -> a 
+    traceChunk = trace $ "[+] chunk: " ++ show chunk
+
 
 assembleParseError :: String -> BSC.ByteString -> ParseResult
 assembleParseError parserError chunk = Left $ T.concat [
@@ -168,6 +175,10 @@ handleExceptions :: (MonadIO m) => IMAPConnection ->
                                    m ()
 handleExceptions conn e = do
   let state = imapState conn
+  liftIO $ do 
+    traceIO   "[-] in RWtch.handleExceptions"
+    traceIO $ "    exception is: " ++ show e
+    traceIO   "    writing 'Disconnected' to watcher thrd"
 
   threadId <- liftIO . atomically $ do
     writeTVar (connectionState conn) Disconnected

@@ -66,6 +66,7 @@ import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TVar
 import Control.Monad.STM
 import Data.Maybe (isJust, fromJust)
+import Debug.Trace
 
 import Control.Concurrent (forkIO, killThread)
 
@@ -108,9 +109,11 @@ connectServer connParams wrappedSettings = do
     imapState = state
   }
 
+  traceIO "[-] launching watcher thread"
   watcherThreadId <- forkIO $ requestWatcher conn
   atomically $ writeTVar (serverWatcherThread . imapState $ conn)
     (Just watcherThreadId)
+  traceIO "[-] written watcher state"
 
   return conn
 
@@ -147,6 +150,7 @@ startTLS conn tls = do
     Tagged (TaggedResult _ resState _) -> when (resState == OK) $
       do
         threadId <- liftIO . atomically . readTVar $ serverWatcherThread state
+        liftIO $ traceIO "[-] startTLS, killing thread"
         liftIO . killThread . fromJust $ threadId
         liftIO $ connectionSetSecure (connectionContext state) (rawConnection state) tls
 
@@ -174,8 +178,9 @@ login :: (MonadPlus m, MonadIO m, Universe m) =>
          T.Text ->
          T.Text ->
          m CommandResult
-login conn username password = sendCommand conn . encodeUtf8 $
-  T.intercalate " " ["LOGIN", escapeText username, escapeText password]
+login conn username password =
+  sendCommand conn . encodeUtf8 $
+    T.intercalate " " ["LOGIN", escapeText username, escapeText password]
 
 -- |Authenticate with the server. During the authentication control is given
 --  to the library user and is returned to the library at the end of authentication
