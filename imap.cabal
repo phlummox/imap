@@ -135,7 +135,7 @@ library
                         FlexibleInstances,
                         TemplateHaskell,
                         LambdaCase
-  ghc-options:          -Wall -fno-warn-unused-do-bind
+  ghc-options:          -Wall -fno-warn-unused-do-bind -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints
 
 Test-Suite imap-test
   type:                 exitcode-stdio-1.0
