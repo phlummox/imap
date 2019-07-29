@@ -4,6 +4,7 @@ import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.STM.RollingQueue as RQ
 import Control.Concurrent.STM.TVar (TVar)
+import Control.Concurrent.MVar
 -- import Data.DeriveTH
 
 import Control.Concurrent (ThreadId)
@@ -32,14 +33,17 @@ isUndefinedState UndefinedState = True; isUndefinedState _ = False
 isConnected Connected = True; isConnected _ = False
 isDisconnected Disconnected = True; isDisconnected _ = False
 
+type ResultHandler = UntaggedResult -> IO ()
+
 data IMAPConnection = IMAPConnection {
   -- |The current connection state
-  connectionState :: TVar ConnectionState,
+  connectionState :: TVar ConnectionState
   -- |Contains commands sent by the server which we didn't expect.
   --  Probably message and mailbox state updates
-  untaggedQueue :: RQ.RollingQueue UntaggedResult,
+  ,untaggedQueue :: RQ.RollingQueue UntaggedResult
   -- |Internal state of the library
-  imapState :: IMAPState
+  ,imapState :: IMAPState
+  ,untaggedHandler :: MVar ResultHandler
 }
 
 data IMAPState = IMAPState {

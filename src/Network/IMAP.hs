@@ -53,7 +53,10 @@ module Network.IMAP (
   uidStore,
   copy,
   uidCopy,
-  simpleFormat
+  simpleFormat,
+  setUntaggedHandler,
+  idle,
+  testHandler
 ) where
 
 import Network.Connection
@@ -64,17 +67,18 @@ import qualified Data.ByteString.Char8 as BSC
 import qualified Data.STM.RollingQueue as RQ
 import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TVar
+import Control.Concurrent.MVar
 import Control.Monad.STM
-import Data.Maybe (isJust, fromJust)
+import Data.Maybe
 import Debug.Trace
 
-import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent (forkIO, killThread, threadDelay)
 
 import Network.IMAP.Types
 import Network.IMAP.RequestWatcher
 import Network.IMAP.Utils
 
-import Control.Monad (MonadPlus(..), when)
+import Control.Monad
 import Control.Monad.IO.Class (MonadIO(..))
 import ListT (toList, ListT)
 import qualified Data.List as L
@@ -82,8 +86,11 @@ import qualified Data.List as L
 -- |Connects to the server and gives you a connection object
 --  that needs to be passed to any other command. You should only call it once
 --  for every connection you wish to create
-connectServer :: ConnectionParams -> Maybe IMAPSettings -> IO IMAPConnection
-connectServer connParams wrappedSettings = do
+--
+-- also takes as arg a "handler" for untagged results
+-- sent to the client
+connectServer :: ConnectionParams -> Maybe IMAPSettings -> Maybe ResultHandler -> IO IMAPConnection
+connectServer connParams wrappedSettings handlerM = do
   context <- initConnectionContext
   connection <- connectTo context connParams
   let settings = if isJust wrappedSettings then fromJust wrappedSettings else defaultImapSettings
@@ -103,19 +110,37 @@ connectServer connParams wrappedSettings = do
     imapSettings = settings
   }
 
+  -- use a default "no-op" handler if none specified
+  let handler :: ResultHandler
+      handler = fromMaybe (return . const ()) handlerM
+
+  handlerVar <- newMVar handler
+
   let conn = IMAPConnection {
     connectionState = connState,
     untaggedQueue = untaggedRespsQueue,
-    imapState = state
+    imapState = state,
+    untaggedHandler = handlerVar
   }
 
   traceIO "[-] launching watcher thread"
   watcherThreadId <- forkIO $ requestWatcher conn
+  traceIO $ "[-] watcher thread id:" ++ show watcherThreadId
   atomically $ writeTVar (serverWatcherThread . imapState $ conn)
     (Just watcherThreadId)
   traceIO "[-] written watcher state"
 
   return conn
+
+setUntaggedHandler :: IMAPConnection -> ResultHandler -> IO ()
+setUntaggedHandler conn newHandler =
+  modifyMVar_ (untaggedHandler conn) ( return . const newHandler )
+
+testHandler :: IMAPConnection -> IO ()
+testHandler conn = do
+  handler <- readMVar $ untaggedHandler conn
+  handler (Exists 22)
+
 
 -- |An escape hatch, gives you the ability to send any command to the server,
 --  even one not implemented by this library
@@ -133,6 +158,41 @@ sendCommand conn command = ifNotDisconnected conn $ do
   liftIO . atomically $ writeTQueue (responseRequests state) responseRequest
 
   connectionPut' (rawConnection state) commandLine
+  readResults state responseRequest
+
+-- | Send an IDLE command; an IDLE command is started
+-- by sending "IDLE", but not *finished* till you send
+-- "DONE".
+--
+-- In the meantime, the server should alert you to
+-- newly arrived messages. (And probably other
+-- changes in folder state.)
+--
+-- use: @idle conn secsDuration@.
+--
+-- arguments are:
+--
+-- @conn@ An IMAP connections
+-- @secsduration@ number of seconds to wait until sending "DONE".
+--
+-- Note that the standard specifies that servers
+-- aren't obliged to keep the connection open more than
+-- 30 minutes, so make the duration (much) less
+-- than that.
+idle :: (MonadPlus m, MonadIO m, Universe m) =>
+               IMAPConnection -> Int ->
+               m CommandResult
+idle conn secsDuration = ifNotDisconnected conn  $ do
+  let state = imapState conn
+  requestId <- liftIO genRequestId
+  responseQ <- liftIO . atomically $ newTQueue
+  let idleCommandLine = BSC.concat [requestId, " ", "IDLE", "\r\n"]
+  connectionPut' (rawConnection state) idleCommandLine
+  liftIO $ threadDelay $ secsDuration * 1000000
+
+  let responseRequest = ResponseRequest responseQ requestId
+  liftIO . atomically $ writeTQueue (responseRequests state) responseRequest
+  connectionPut' (rawConnection state) "DONE\r\n"
   readResults state responseRequest
 
 -- |

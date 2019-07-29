@@ -17,6 +17,7 @@ import qualified Data.Text as T
 import qualified Data.STM.RollingQueue as RQ
 import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TVar
+import Control.Concurrent.MVar
 import Control.Concurrent (killThread)
 import Control.Monad.STM
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -53,7 +54,10 @@ reactToReply conn parsedReply = do
       updateConnState conn reply
       case reply of
         Tagged t -> dispatchTagged requests t
-        Untagged u -> dispatchUntagged conn requests u
+        Untagged u -> do res <- dispatchUntagged conn requests u
+                         liftIO $ do handler <- readMVar $ untaggedHandler conn
+                                     handler u
+                         return res
 
   liftIO . atomically $ writeTVar (outstandingReqs state) pendingReqs
   shouldIDie conn

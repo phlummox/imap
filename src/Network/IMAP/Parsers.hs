@@ -17,13 +17,23 @@ import Control.Applicative
 parseReply :: Parser (Either ErrorMessage CommandResult)
 parseReply = parseFetch <|> parseLine
 
+-- TODO: prob should do case-insensitive parsing of "+ idling"
 parseLine :: Parser (Either ErrorMessage CommandResult)
 parseLine = do
   many $ string "\r\n"
 
   -- WARNING: We are not actually waiting for go ahead here :P
   skipMany $ string "+ go ahead\r\n"
-  parsed <- parseUntagged <|> parseTagged
+
+  skipMany $ string "+ idling\r\n"
+
+  -- ... turns out, adding parser names doesn't make a lick of
+  -- difference, since attoparsec will only report the
+  -- parser it's currently in - it doesn't keep a stack.
+  -- (AFAIK).
+  -- Ah well.
+  parsed <- (parseUntagged <?> "parseUntagged") <|>
+            (parseTagged <?> "parseTagged")
   string "\r\n"
   return parsed
 
